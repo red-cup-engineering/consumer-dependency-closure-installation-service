@@ -17,7 +17,7 @@
 // typed refusal. No prose partiality.
 
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -125,12 +125,45 @@ async function materializeNpmrc({ consumer, lines }) {
   }
   const changed = prior !== text;
   if (changed) await writeFile(path, text);
-  return { path, lines, changed, priorLines: prior === null ? null : prior.split("\n").filter((line) => line !== "") };
+  return { path, lines, changed, prior, priorLines: prior === null ? null : prior.split("\n").filter((line) => line !== "") };
+}
+
+async function restoreNpmrc(npmrc) {
+  if (!npmrc.changed) return;
+  try {
+    if (npmrc.prior === null) await unlink(npmrc.path);
+    else await writeFile(npmrc.path, npmrc.prior, "utf8");
+  } catch (error) {
+    refuse("consumer-configuration-rollback", { consumer: npmrc.path, diagnostic: error.message });
+  }
+}
+
+// `npm install` is intentionally not an implementation option here: it is
+// permitted to rewrite the lock and therefore turns a committed closure into
+// an observation made by the build machine.  The consumer's committed lock is
+// the closure authority; npm ci both checks it against package.json and
+// installs exactly that graph.
+export async function readCommittedDependencyLock({ consumer }) {
+  const path = join(consumer, "package-lock.json");
+  let lock;
+  try {
+    lock = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    refuse("committed-dependency-closure", { consumer, diagnostic: `package-lock.json is required and must be valid JSON: ${error.message}` });
+  }
+  if (!Number.isInteger(lock.lockfileVersion) || lock.lockfileVersion < 2 || !lock.packages || typeof lock.packages !== "object") {
+    refuse("committed-dependency-closure", { consumer, diagnostic: "package-lock.json does not contain an npm lockfile v2+ package graph" });
+  }
+  return Object.freeze({ path, lockfileVersion: lock.lockfileVersion, packages: Object.keys(lock.packages).length });
+}
+
+export function committedClosureInstallArguments() {
+  return Object.freeze(["ci", "--no-audit", "--no-fund"]);
 }
 
 async function runInstall({ consumer, npmCommand }) {
   try {
-    const { stdout } = await execute(npmCommand, ["install", "--no-audit", "--no-fund"], {
+    const { stdout } = await execute(npmCommand, committedClosureInstallArguments(), {
       cwd: consumer,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -203,38 +236,45 @@ export async function installConsumerDependencyClosure({
   }
   const consumer = resolve(consumerPath);
   const manifest = await readConsumerManifest(consumer);
+  const lock = await readCommittedDependencyLock({ consumer });
   const rows = declaredDependencies(manifest);
   const unionScopes = await unionScopeRoster({ registryUrl, fetchImplementation });
   const unionPackages = await verifyUnionAvailability({ rows, unionScopes, registryUrl, fetchImplementation });
   const consumerScopes = [...new Set(rows.map((row) => scopeOf(row.name)).filter((scope) => scope !== null && unionScopes.includes(scope)))].sort();
   const npmrc = await materializeNpmrc({ consumer, lines: npmrcLines({ publicRegistryUrl, registryUrl, scopes: consumerScopes }) });
-  const installOutput = await runInstall({ consumer, npmCommand });
-  const tree = await readInstalledTree({ consumer, registryUrl });
-  const verified = await verifyDeclaredImports({ consumer, rows });
-  const defects = verified.filter((row) => row.resolution === "unresolved");
-  if (defects.length > 0) {
-    refuse("import-resolution", {
+  try {
+    const installOutput = await runInstall({ consumer, npmCommand });
+    const tree = await readInstalledTree({ consumer, registryUrl });
+    const verified = await verifyDeclaredImports({ consumer, rows });
+    const defects = verified.filter((row) => row.resolution === "unresolved");
+    if (defects.length > 0) {
+      refuse("import-resolution", {
+        consumer,
+        defects: defects.map(({ name, kind, spec, diagnostic }) => ({ name, kind, spec, diagnostic })),
+      });
+    }
+    return Object.freeze({
+      type: "ConsumerDependencyClosureReceipt",
+      version: 1,
       consumer,
-      defects: defects.map(({ name, kind, spec, diagnostic }) => ({ name, kind, spec, diagnostic })),
+      package: { name: manifest.name ?? null, version: manifest.version ?? null },
+      registry: { union: registryUrl, public: publicRegistryUrl, unionScopes },
+      npmrc: { ...npmrc, prior: undefined },
+      closure: { lockfile: lock.path, lockfileVersion: lock.lockfileVersion, packageEntries: lock.packages },
+      install: { command: `${npmCommand} ${committedClosureInstallArguments().join(" ")}`, output: installOutput.slice(-2000) },
+      packages: { installed: tree.installedPackages, provenance: tree.provenance },
+      unionPackages,
+      declaredImports: verified.map((row) => ({
+        name: row.name,
+        kind: row.kind,
+        spec: row.spec,
+        resolution: row.resolution,
+        version: tree.installed.get(row.name)?.version ?? null,
+        source: tree.installed.get(row.name)?.source ?? null,
+      })),
     });
+  } catch (error) {
+    await restoreNpmrc(npmrc);
+    throw error;
   }
-  return Object.freeze({
-    type: "ConsumerDependencyClosureReceipt",
-    version: 1,
-    consumer,
-    package: { name: manifest.name ?? null, version: manifest.version ?? null },
-    registry: { union: registryUrl, public: publicRegistryUrl, unionScopes },
-    npmrc,
-    install: { command: `${npmCommand} install --no-audit --no-fund`, output: installOutput.slice(-2000) },
-    packages: { installed: tree.installedPackages, provenance: tree.provenance },
-    unionPackages,
-    declaredImports: verified.map((row) => ({
-      name: row.name,
-      kind: row.kind,
-      spec: row.spec,
-      resolution: row.resolution,
-      version: tree.installed.get(row.name)?.version ?? null,
-      source: tree.installed.get(row.name)?.source ?? null,
-    })),
-  });
 }

@@ -20,6 +20,10 @@
     "access": "public",
     "provenance": true
   },
+  "scripts": {
+    "check": "node --check src/install-consumer-dependency-closure.mjs && node --check bin/install-consumer-dependency-closure.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
   "x-semiotic-voxel": {
     "profile": "org.harmonious-union.semiotic-voxel.v1",
     "owner": "red-cup-engineering",
