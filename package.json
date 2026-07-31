@@ -23,23 +23,5 @@
   "scripts": {
     "check": "node --check src/install-consumer-dependency-closure.mjs && node --check bin/install-consumer-dependency-closure.mjs",
     "test": "node --test test/*.test.mjs"
-  },
-  "x-semiotic-voxel": {
-    "profile": "org.harmonious-union.semiotic-voxel.v1",
-    "owner": "red-cup-engineering",
-    "kind": "capability-cell",
-    "actor": "urn:ame:consumer-dependency-closure-installation-service",
-    "operations": [
-      "consumer-dependency-closure-installation-service"
-    ],
-    "capabilities": [
-      {
-        "capability": "consumer-dependency-closure-installation-service",
-        "faces": [
-          "consumer-dependency-closure-installation-service"
-        ]
-      }
-    ],
-    "package": "@red-cup-engineering/consumer-dependency-closure-installation-service"
   }
 }

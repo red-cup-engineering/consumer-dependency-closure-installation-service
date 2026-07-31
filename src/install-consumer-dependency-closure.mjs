@@ -2,14 +2,14 @@
 // private package registry and install its complete dependency closure.
 //
 // Executable source composed from three crystallized prior implementations:
-//   (a) semiotic-voxel-package-registry-service/src/package-registry.mjs —
+//   (a) npm-registry-service/src/package-registry.mjs (npm-registry-services-section) —
 //       the client.npmrc materialization (public default registry plus one
 //       scoped registry line per Union scope), which this kernel reads back
 //       from the live registry rather than re-deriving;
 //   (b) the settled consumer .npmrc pattern (gemini-inference-team,
 //       recursive-infomaterial-fabrication-service): public registry default
 //       plus Union scopes routed to the private registry;
-//   (c) semiotic-voxel-package-installation-assay-service — the declared-import
+//   (c) package-installation-check-service (npm-registry-services-section) — the declared-import
 //       resolution law (import.meta.resolve exercised from the consumer's own
 //       membrane in a child Node process).
 //
@@ -45,7 +45,7 @@ async function readConsumerManifest(consumer) {
 }
 
 // The Union scope roster is the registry's own materialized client.npmrc —
-// crystallized output of fabricatePackageRegistry, never a local guess.
+// crystallized output of buildPackageRegistry, never a local guess.
 async function unionScopeRoster({ registryUrl, fetchImplementation }) {
   let body;
   try {
