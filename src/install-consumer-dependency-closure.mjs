@@ -205,9 +205,8 @@ async function readInstalledTree({ consumer, registryUrl }) {
   return { installedPackages: Object.keys(lock.packages ?? {}).filter((path) => path !== "").length, provenance, installed };
 }
 
-// The assay law from semiotic-voxel-package-installation-assay-service: every
-// declared bare import must resolve from the consumer's own membrane, in a
-// child Node process whose resolution standpoint is the consumer directory.
+// Every declared bare import must resolve from the consumer's own membrane, in
+// a child Node process whose resolution standpoint is the consumer directory.
 async function verifyDeclaredImports({ consumer, rows }) {
   if (rows.length === 0) return [];
   const program = [
