@@ -17,12 +17,13 @@
 // typed refusal. No prose partiality.
 
 import { execFile } from "node:child_process";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { access, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
+const PLAIN_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const SCOPE_LINE = /^@([a-z0-9-]+):registry=(\S+)$/u;
 
 export class ClosureRefusal extends Error {
@@ -138,12 +139,23 @@ async function restoreNpmrc(npmrc) {
   }
 }
 
+async function mayHavePrecedentShrinkwrap(consumer) {
+  try {
+    await access(join(consumer, "npm-shrinkwrap.json"));
+    return true;
+  } catch (error) {
+    // Only known absence makes package-lock authoritative for this preflight.
+    // npm ci retains responsibility for inaccessible or malformed shrinkwraps.
+    return error?.code !== "ENOENT";
+  }
+}
+
 // `npm install` is intentionally not an implementation option here: it is
 // permitted to rewrite the lock and therefore turns a committed closure into
 // an observation made by the build machine.  The consumer's committed lock is
 // the closure authority; npm ci both checks it against package.json and
 // installs exactly that graph.
-export async function readCommittedDependencyLock({ consumer }) {
+export async function readCommittedDependencyLock({ consumer, manifest }) {
   const path = join(consumer, "package-lock.json");
   let lock;
   try {
@@ -154,6 +166,36 @@ export async function readCommittedDependencyLock({ consumer }) {
   if (!Number.isInteger(lock.lockfileVersion) || lock.lockfileVersion < 2 || !lock.packages || typeof lock.packages !== "object") {
     refuse("committed-dependency-closure", { consumer, diagnostic: "package-lock.json does not contain an npm lockfile v2+ package graph" });
   }
+  // Diagnose unambiguous exact runtime-pin defects before registry discovery
+  // or consumer configuration changes. This is not a second npm resolver:
+  // ranges, optional/accept overrides, overlapping dev declarations, workspace
+  // links and non-plain versions remain npm ci's responsibility. npm also
+  // prefers npm-shrinkwrap.json, so do not diagnose an ignored package-lock.
+  // Root metadata alone is not proof that a locked version violates a declaration.
+  const runtimePins = manifest && !await mayHavePrecedentShrinkwrap(consumer)
+    ? manifest.dependencies ?? {} : {};
+  const defects = [];
+  for (const [name, spec] of Object.entries(runtimePins).sort(([left], [right]) => left.localeCompare(right))) {
+    if (typeof spec !== "string" || !PLAIN_VERSION.test(spec)
+        || Object.hasOwn(manifest.optionalDependencies ?? {}, name)
+        || Object.hasOwn(manifest.acceptDependencies ?? {}, name)
+        || Object.hasOwn(manifest.devDependencies ?? {}, name)) continue;
+    const lockPath = `node_modules/${name}`;
+    const entry = lock.packages[lockPath];
+    if (entry?.link === true) continue;
+    if (entry !== undefined && (typeof entry?.version !== "string" || !PLAIN_VERSION.test(entry.version))) continue;
+    if (entry?.version !== spec) defects.push({
+      name, kind: "dependency", spec, lockPath,
+      lockedSpec: lock.packages[""]?.dependencies?.[name] ?? null,
+      lockedVersion: entry?.version ?? null,
+      reason: entry === undefined ? "locked-package-absent" : "exact-version-mismatch",
+    });
+  }
+  if (defects.length > 0) refuse("committed-dependency-closure", {
+    consumer,
+    diagnostic: "package.json exact runtime dependencies disagree with package-lock.json",
+    defects,
+  });
   return Object.freeze({ path, lockfileVersion: lock.lockfileVersion, packages: Object.keys(lock.packages).length });
 }
 
@@ -235,7 +277,7 @@ export async function installConsumerDependencyClosure({
   }
   const consumer = resolve(consumerPath);
   const manifest = await readConsumerManifest(consumer);
-  const lock = await readCommittedDependencyLock({ consumer });
+  const lock = await readCommittedDependencyLock({ consumer, manifest });
   const rows = declaredDependencies(manifest);
   const unionScopes = await unionScopeRoster({ registryUrl, fetchImplementation });
   const unionPackages = await verifyUnionAvailability({ rows, unionScopes, registryUrl, fetchImplementation });
