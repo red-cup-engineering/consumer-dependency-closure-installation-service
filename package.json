@@ -21,7 +21,7 @@
     "provenance": true
   },
   "scripts": {
-    "check": "node --check src/install-consumer-dependency-closure.mjs && node --check scripts/install-consumer-dependency-closure.mjs",
-    "test": "node --test test/*.test.mjs"
+    "check": "node --check src/install-consumer-dependency-closure.mjs && node --check scripts/install-consumer-dependency-closure.mjs && node --check scripts/check-test-summary.mjs",
+    "test": "node --test --test-reporter=tap test/*.test.mjs"
   }
 }
