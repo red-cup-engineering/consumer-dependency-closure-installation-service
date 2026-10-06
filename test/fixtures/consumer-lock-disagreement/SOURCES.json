@@ -10,7 +10,7 @@
     "activitypub": {
       "repository": "red-cup-engineering/web-services-section",
       "sourceObject": "fd8d4ccc8a954d1905d656a32dae350965334d2d",
-      "sourceObjectKind": "git-tree",
+      "sourceObjectKind": "git-commit",
       "sourceRoot": "services/web-protocol-services-section/services/activitypub-services-section"
     }
   },
