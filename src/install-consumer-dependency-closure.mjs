@@ -249,12 +249,17 @@ async function readInstalledTree({ consumer, registryUrl }) {
 
 // Every declared bare import must resolve from the consumer's own membrane, in
 // a child Node process whose resolution standpoint is the consumer directory.
+// Node may resolve a file URL even when its export/main target does not exist.
+// Check the target without evaluating package code before issuing a receipt.
 async function verifyDeclaredImports({ consumer, rows }) {
   if (rows.length === 0) return [];
   const program = [
+    "import { statSync } from 'node:fs';",
     "const rows=JSON.parse(process.argv[1]);",
     "for(const row of rows){",
-    "try{row.resolved=import.meta.resolve(row.name);row.resolution=\"resolved\"}",
+    "try{row.resolved=import.meta.resolve(row.name);",
+    "if(row.resolved.startsWith('file:')&&!statSync(new URL(row.resolved)).isFile()){throw new Error('resolved import target is not a file: '+row.resolved)}",
+    "row.resolution=\"resolved\"}",
     "catch(error){if(error?.code===\"ERR_PACKAGE_PATH_NOT_EXPORTED\"){row.resolution=\"resolved-unexported-root\"}else{row.resolution=\"unresolved\";row.diagnostic=error.message}}",
     "}process.stdout.write(JSON.stringify(rows))",
   ].join("");
