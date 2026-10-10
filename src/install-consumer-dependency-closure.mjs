@@ -9,7 +9,7 @@
 //   (b) the settled consumer .npmrc pattern (gemini-inference-team,
 //       recursive-infomaterial-fabrication-service): public registry default
 //       plus Union scopes routed to the private registry;
-//   (c) package-installation-check-service (npm-registry-services-section) — the declared-import
+//   (c) check-npm-registry-package-installations-service (npm-registry-services-section) — the declared-import
 //       resolution law (import.meta.resolve exercised from the consumer's own
 //       membrane in a child Node process).
 //
