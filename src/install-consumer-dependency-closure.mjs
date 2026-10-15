@@ -22,7 +22,9 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
+// Exact registry artifacts include immutable prereleases (e.g. 0.1.0-sha.abcd),
+// never ranges, dist-tags, workspace/file links or Git checkout coordinates.
+const EXACT_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const PLAIN_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const SCOPE_LINE = /^@([a-z0-9-]+):registry=(\S+)$/u;
 
@@ -88,6 +90,12 @@ function scopeOf(name) {
 // npm is allowed to mutate anything.
 async function verifyUnionAvailability({ rows, unionScopes, registryUrl, fetchImplementation }) {
   const unionRows = rows.filter((row) => unionScopes.includes(scopeOf(row.name) ?? ""));
+  const mutable = unionRows.filter((row) => typeof row.spec !== "string" || !EXACT_VERSION.test(row.spec));
+  if (mutable.length) refuse("non-immutable-union-dependency", {
+    registry: registryUrl,
+    defects: mutable.map(({ name, kind, spec }) => ({ name, kind, spec })),
+    diagnostic: "Union consumers require exact published package versions, not workspace, file, git, tag or range references",
+  });
   for (const row of unionRows) {
     let metadata;
     try {
@@ -99,7 +107,7 @@ async function verifyUnionAvailability({ rows, unionScopes, registryUrl, fetchIm
       if (error instanceof ClosureRefusal) throw error;
       refuse("registry-unreachable", { registry: registryUrl, package: row.name, diagnostic: error.message });
     }
-    if (EXACT_VERSION.test(row.spec) && !Object.hasOwn(metadata.versions ?? {}, row.spec)) {
+    if (!Object.hasOwn(metadata.versions ?? {}, row.spec)) {
       refuse("package-version-absent", {
         registry: registryUrl,
         package: row.name,
@@ -237,14 +245,17 @@ async function readInstalledTree({ consumer, registryUrl }) {
     refuse("dependency-tree", { consumer, diagnostic: `installed tree is unreadable: ${error.message}` });
   }
   const provenance = { "union-private-registry": 0, "public-npm": 0, "other-registry": 0, workspace: 0 };
-  const installed = new Map();
+  const installed = new Map(), entries = new Map();
   for (const [path, entry] of Object.entries(lock.packages ?? {})) {
     if (path === "") continue;
     const name = entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length);
-    provenance[provenanceOf(entry.resolved, registryUrl)] += 1;
-    if (!installed.has(name)) installed.set(name, { version: entry.version, source: provenanceOf(entry.resolved, registryUrl) });
+    const source = provenanceOf(entry.resolved, registryUrl);
+    provenance[source] += 1;
+    const selected = { version: entry.version, source, link: entry.link === true };
+    entries.set(path, selected);
+    if (!installed.has(name)) installed.set(name, selected);
   }
-  return { installedPackages: Object.keys(lock.packages ?? {}).filter((path) => path !== "").length, provenance, installed };
+  return { installedPackages: Object.keys(lock.packages ?? {}).filter((path) => path !== "").length, provenance, installed, entries };
 }
 
 // Every declared bare import must resolve from the consumer's own membrane, in
@@ -291,6 +302,15 @@ export async function installConsumerDependencyClosure({
   try {
     const installOutput = await runInstall({ consumer, npmCommand });
     const tree = await readInstalledTree({ consumer, registryUrl });
+    const unionDefects = rows.filter((row) => unionScopes.includes(scopeOf(row.name) ?? ""))
+      .flatMap((row) => {
+        const entry = tree.entries.get(`node_modules/${row.name}`);
+        return entry?.link !== true && entry?.source === "union-private-registry" && entry?.version === row.spec
+          ? [] : [{ name: row.name, kind: row.kind, spec: row.spec,
+            installedVersion: entry?.version ?? null, installedSource: entry?.source ?? null,
+            reason: entry?.link === true ? "workspace-link" : "not-exact-union-registry-release" }];
+      });
+    if (unionDefects.length) refuse("installed-union-release", { consumer, registry: registryUrl, defects: unionDefects });
     const verified = await verifyDeclaredImports({ consumer, rows });
     const defects = verified.filter((row) => row.resolution === "unresolved");
     if (defects.length > 0) {
