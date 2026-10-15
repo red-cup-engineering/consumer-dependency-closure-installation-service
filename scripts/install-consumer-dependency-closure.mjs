@@ -6,6 +6,12 @@
 //     | install-consumer-dependency-closure.mjs
 //
 // Input record: { consumer, registryUrl?, publicRegistryUrl?, npmCommand? }
+// Source-owned method: npm ci MUST consume an admitted v2+ committed lock;
+// every Union-routed declared dependency MUST name an exact published registry
+// version (including literal prereleases). A nearby workspace checkout, a
+// file link, a moving tag or a semver range is NOT a released dependency.
+// This admission and the retained npm-ci/import-resolution receipt do not yet
+// prove the complete installed transitive tree's private-registry provenance.
 // Output: ConsumerDependencyClosureReceipt (exit 0)
 //     or  ConsumerDependencyClosureRefusal (exit 3)
 //     or  a usage refusal (exit 2).

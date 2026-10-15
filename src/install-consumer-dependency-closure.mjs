@@ -22,7 +22,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
+const EXACT_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const PLAIN_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const SCOPE_LINE = /^@([a-z0-9-]+):registry=(\S+)$/u;
 
@@ -88,6 +88,12 @@ function scopeOf(name) {
 // npm is allowed to mutate anything.
 async function verifyUnionAvailability({ rows, unionScopes, registryUrl, fetchImplementation }) {
   const unionRows = rows.filter((row) => unionScopes.includes(scopeOf(row.name) ?? ""));
+  const mutable = unionRows.filter((row) => typeof row.spec !== "string" || !EXACT_VERSION.test(row.spec));
+  if (mutable.length) refuse("non-immutable-union-dependency", {
+    registry: registryUrl,
+    defects: mutable.map(({ name, kind, spec }) => ({ name, kind, spec })),
+    diagnostic: "Union packages require exact published releases, not mutable versions or source checkouts",
+  });
   for (const row of unionRows) {
     let metadata;
     try {
@@ -99,7 +105,7 @@ async function verifyUnionAvailability({ rows, unionScopes, registryUrl, fetchIm
       if (error instanceof ClosureRefusal) throw error;
       refuse("registry-unreachable", { registry: registryUrl, package: row.name, diagnostic: error.message });
     }
-    if (EXACT_VERSION.test(row.spec) && !Object.hasOwn(metadata.versions ?? {}, row.spec)) {
+    if (!Object.hasOwn(metadata.versions ?? {}, row.spec)) {
       refuse("package-version-absent", {
         registry: registryUrl,
         package: row.name,
