@@ -11,7 +11,7 @@
     "capability-cell",
     "deterministic"
   ],
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/red-cup-engineering/consumer-dependency-closure-installation-service.git"
@@ -23,5 +23,9 @@
   "scripts": {
     "check": "node --check src/install-consumer-dependency-closure.mjs && node --check scripts/install-consumer-dependency-closure.mjs && node --check scripts/check-test-summary.mjs",
     "test": "node --test --test-reporter=tap test/*.test.mjs"
+  },
+  "funding": {
+    "type": "individual",
+    "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   }
 }
